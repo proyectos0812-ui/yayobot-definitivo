@@ -1,45 +1,67 @@
 import streamlit as st
-import os
+import streamlit.components.v1 as components
+import cv2
+import mediapipe as mp
+import av
+from streamlit_webrtc import webrtc_streamer, RTCConfiguration
 
-# Evitar conflictos de librerías
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+st.set_page_config(page_title="Yayobot con Voz", page_icon="👵")
 
-st.set_page_config(page_title="Yayobot", page_icon="👵")
-st.title("👵 Yayobot - Detector de Caídas")
+# --- FUNCIÓN DE VOZ (JavaScript) ---
+def hablar(texto):
+    js_code = f"""
+    <script>
+    var msg = new SpeechSynthesisUtterance('{texto}');
+    msg.lang = 'es-ES';
+    window.speechSynthesis.speak(msg);
+    </script>
+    """
+    components.html(js_code, height=0)
 
-try:
-    # Importación directa y específica
-    import mediapipe as mp
-    from mediapipe.python.solutions import pose as mp_pose
-    from mediapipe.python.solutions import drawing_utils as mp_drawing
-    import cv2
-    import av
-    from streamlit_webrtc import webrtc_streamer
+st.title("👵 Yayobot con Voz")
 
-    # Inicializar el modelo
-    pose_model = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+# Inicialización de IA
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+mp_drawing = mp.solutions.drawing_utils
+
+# Variable para no repetir la voz mil veces por segundo
+if 'hablado' not in st.session_state:
+    st.session_state.hablado = False
+
+def callback(frame):
+    img = frame.to_ndarray(format="bgr24")
+    results = pose.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     
-    st.success("✅ ¡IA de visión cargada con éxito!")
+    if results.pose_landmarks:
+        mp_drawing.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+        
+        # Si la nariz (punto 0) o hombros bajan mucho
+        y_nariz = results.pose_landmarks.landmark[0].y
+        if y_nariz > 0.8:
+            return "CAIDA"
+            
+    return img
 
-    def callback(frame):
-        img = frame.to_ndarray(format="bgr24")
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = pose_model.process(img_rgb)
+# Interfaz de Streamlit
+col1, col2 = st.columns([3, 1])
 
-        if results.pose_landmarks:
-            mp_drawing.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            # Alerta de caída si el hombro baja mucho
-            if results.pose_landmarks.landmark[11].y > 0.8:
-                cv2.putText(img, "CAIDA DETECTADA", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
-
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-    webrtc_streamer(
-        key="yayo-final-v5",
+with col1:
+    ctx = webrtc_streamer(
+        key="yayo-voz",
         video_frame_callback=callback,
-        media_stream_constraints={"video": True, "audio": False}
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        media_stream_constraints={"video": True, "audio": False},
     )
 
-except Exception as e:
-    st.error(f"Error de inicialización: {e}")
-    st.info("💡 Consejo: Si el error persiste, borra la app en Streamlit Cloud y créala de nuevo para limpiar la caché.")
+# Lógica de detección de caída y voz
+if ctx.state.playing:
+    # Si detectamos que la nariz está muy baja
+    st.warning("⚠️ Sistema de vigilancia activo")
+    
+    # Nota: El procesamiento real de la voz debe dispararse 
+    # cuando el estado cambia. Aquí un ejemplo simple:
+    if st.button("Simular Alerta de Voz"):
+        hablar("He detectado una caída. ¿Necesitas ayuda?")
+
+st.info("Para que la voz funcione, el navegador debe tener el sonido activado.")
