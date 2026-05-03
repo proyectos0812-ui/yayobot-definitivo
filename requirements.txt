@@ -4,3 +4,4 @@ mediapipe
 opencv-python-headless
 av
 numpy<2.0.0
+tornado<6.4
