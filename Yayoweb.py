@@ -3,16 +3,15 @@ import streamlit.components.v1 as components
 import cv2
 import mediapipe as mp
 import av
-from streamlit_webrtc import webrtc_streamer
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
-# Configuración inicial
+# Configuración de la web
 st.set_page_config(page_title="Yayobot Pro", page_icon="👵")
-st.title("👵 Yayobot: Protección Total")
+st.title("👵 Yayobot: Detector de Caídas")
 
-# --- MOTOR DE VOZ ---
-def lanzar_voz(texto):
-    # JavaScript para que el navegador hable
-    js = f"""
+# --- FUNCIÓN DE VOZ (JavaScript) ---
+def hablar(texto):
+    js_code = f"""
     <script>
     var msg = new SpeechSynthesisUtterance('{texto}');
     msg.lang = 'es-ES';
@@ -20,40 +19,60 @@ def lanzar_voz(texto):
     window.speechSynthesis.speak(msg);
     </script>
     """
-    components.html(js, height=0)
+    components.html(js_code, height=0)
 
-# --- CONFIGURACIÓN DE IA ---
-mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+# --- INICIALIZACIÓN DE IA ---
+@st.cache_resource
+def load_models():
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    mp_drawing = mp.solutions.drawing_utils
+    return mp_pose, pose, mp_drawing
 
-# Interfaz
-st.subheader("Estado: Vigilando...")
+mp_pose, pose, mp_drawing = load_models()
 
-def callback(frame):
+# --- LÓGICA DE PROCESAMIENTO ---
+def video_frame_callback(frame):
     img = frame.to_ndarray(format="bgr24")
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = pose.process(img_rgb)
-    
-    caida = False
+
     if results.pose_landmarks:
-        # Dibujar esqueleto
-        mp.solutions.drawing_utils.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+        # Dibujamos el esqueleto
+        mp_drawing.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
         
-        # Lógica de caída (Nariz muy abajo)
-        if results.pose_landmarks.landmark[0].y > 0.82:
-            caida = True
-            cv2.putText(img, "ALERTA DE CAIDA", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
+        # Punto 0 es la nariz. Si baja del 80% de la pantalla (0.8) es caída.
+        y_nariz = results.pose_landmarks.landmark[0].y
+        if y_nariz > 0.8:
+            cv2.putText(img, "!!! CAIDA DETECTADA !!!", (50, 100), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
 
     return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-# Cámara
-webrtc_streamer(
-    key="yayo-final-voz",
-    video_frame_callback=callback,
-    media_stream_constraints={"video": True, "audio": False},
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+# --- CONFIGURACIÓN DE CÁMARA (MULTISERVIDOR STUN) ---
+# Esto ayuda a saltar bloqueos de routers y firewalls
+RTC_CONFIG = RTCConfiguration(
+    {"iceServers": [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun1.l.google.com:19302"]},
+        {"urls": ["stun:stun2.l.google.com:19302"]}
+    ]}
 )
 
-# Botón de prueba para la voz (El navegador necesita una interacción previa para permitir sonido)
-if st.button("Activar sonido de alerta"):
-    lanzar_voz("Sistema de ayuda activado. Si te caes, te preguntaré si estás bien.")
+st.subheader("Estado: Sistema de Vigilancia")
+
+# Botón para activar el sonido (Obligatorio por seguridad del navegador)
+if st.button("🔊 ACTIVAR VOZ Y EMPEZAR"):
+    hablar("Sistema de seguridad activado. Estoy vigilando.")
+
+webrtc_streamer(
+    key="yayo-final-v10",
+    mode=WebRtcMode.SENDRECV,
+    rtc_configuration=RTC_CONFIG,
+    video_frame_callback=video_frame_callback,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
+
+st.write("---")
+st.info("Paso 1: Dale a 'Activar Voz'. Paso 2: Dale a 'START' en la cámara.")
