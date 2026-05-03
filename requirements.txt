@@ -1,7 +1,7 @@
 streamlit
 streamlit-webrtc
-mediapipe
-opencv-python-headless
+mediapipe==0.10.11
+opencv-python-headless==4.9.0.80
 av
 numpy<2.0.0
 tornado<6.4
